@@ -1,2 +1,0 @@
-x 2019-12-02 2019-11-25 remove &nbsp; from elastic search body
-x 2019-12-02 2019-11-25 add pagination to /dashboard/posts
