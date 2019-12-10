@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="ie=edge">
+    <title>Document</title>
+    <script src="https://code.jquery.com/jquery-3.4.1.min.js"
+        integrity="sha256-CSXorXvZcTkaix6Yvo6HppcZGetbYMGWSFlBw8HfCJo=" crossorigin="anonymous"></script>
+</head>
+
+<body>
+    <input type='text' placeholder="Message" id='inp' />
+    <div id='indicators'></div>
+    <form>
+        <input id='fileData' type="file" name="fileData" />
+        <button id="submit">Submit</button>
+    </form>
+    <div id='upload_perc'></div>
+    <br />
+    <button id='record'>Record message!</button>
+    <button id='stop-record'>Stop recording message!</button>
+
+    <br />
+    <button id='record-video'>Record video!</button>
+    <button id='stop-record-video' />Stop recording video</button>
+    <br />
+    <video id='preview'></video>
+    <button onclick="sendMsg(event)">Send</button>
+    <br />
+    <ul id="messages"></ul>
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        let inp = document.querySelector('#inp');
+        inp.addEventListener('focus', e => {
+            sendEvent('pre-type', { name });
+        });
+        inp.addEventListener('blur', e => {
+            sendEvent('stop-type', { name });
+        });
+        inp.addEventListener('input', e => {
+            sendEvent('start-type', { name });
+        });
+
+        let name;
+        function getName() {
+            name = prompt('Enter your name first! Bruh');
+            socket.emit('name', { name });
+        }
+
+        function sendEvent(type, value) {
+            socket.emit(type, value);
+        }
+
+        function sendMsg() {
+            let msg = document.querySelector('#inp').value;
+            socket.emit('chat', { msg, name });
+        }
+
+        function sendAudioBlob(blob) {
+            socket.emit('audio', { blob, name });
+        }
+
+        function sendVideoBlob(blob) {
+            socket.emit('video', { blob, name });
+        }
+
+        var socket = io();
+
+        socket.on('chat', d => {
+            const li = document.createElement('li');
+            li.innerHTML = `Msg:${d.msg}<br />By:${d.name}`;
+            if (d.file) {
+                li.innerHTML += `<br />File: <a target='_blank' href='${d.file.url}' download='${d.file.as}'>Download</a>`;
+            }
+            document.querySelector('#messages').append(li);
+        });
+
+        socket.on('audio', d => {
+            const blob = new Blob([d.blob]);
+            const audioUrl = URL.createObjectURL(blob);
+            const audio = new Audio(audioUrl);
+            const id = `audio_${d.name}${Date.now()}`;
+            const li = document.createElement('li');
+            li.innerHTML = `Audio by:${d.name}<br />`;
+            li.innerHTML += `
+                <audio id='${id}'>
+                    <source src='${audioUrl}' />
+                </audio>
+            `;
+            li.innerHTML += `
+                <button id='play${id}' play-audio='${id}'>Play</button>
+                <button id='pause${id}' pause-audio='${id}'>Pause</button>
+            `;
+            document.querySelector('#messages').append(li);
+            $(`#play${id}`).on('click', e => {
+                $(`#${id}`)[0].play();
+            });
+
+            $(`#pause${id}`).on('click', e => {
+                $(`#${id}`)[0].pause();
+            });
+        });
+
+        socket.on('video', d => {
+            const blob = new Blob([d.blob]);
+            const videoURL = URL.createObjectURL(blob);
+            const id = `video_${d.name}${Date.now()}`;
+            const li = document.createElement('li');
+            li.innerHTML = `Video by:${d.name}<br />`;
+            
+            li.innerHTML += `
+                <video id='${id}' src='${videoURL}' controls>
+                </video>
+            `;
+            document.querySelector('#messages').append(li);
+        });
+
+        socket.on('join', d => {
+            const li = document.createElement('li');
+            li.innerHTML = `User joined:${d.name}`;
+            document.querySelector('#messages').append(li);
+        });
+
+        socket.on('leave', d => {
+            const li = document.createElement('li');
+            li.innerHTML = `User left:${d.name}`;
+            document.querySelector('#messages').append(li);
+        });
+
+        socket.on('pre-type', d => {
+            document.querySelector('#indicators').innerHTML = `User about to type: ${d ? d.name : ''}`;
+        });
+
+        socket.on('start-type', d => {
+            document.querySelector('#indicators').innerHTML = `User started to type: ${d ? d.name : ''}`;
+        });
+
+        socket.on('stop-type', d => {
+            document.querySelector('#indicators').innerHTML = `User stopped typing: ${d ? d.name : ''}`;
+        });
+
+        $('#submit').click(e => {
+            e.preventDefault();
+            const msg = document.querySelector('#inp').value;
+            const form = $('form')[0];
+            const data = new FormData(form);
+            var isFormDataEmpty = true;
+            for (var p of data) {
+                if (p[1].size > 0) {
+                    isFormDataEmpty = false;
+                    break;
+                }
+            }
+            if (isFormDataEmpty) {
+                return;
+            }
+            $.ajax({
+                type: 'POST',
+                url: '/upload',
+                data,
+                cache: false,
+                processData: false,
+                contentType: false,
+                success: resp => {
+                    socket.emit('chat', { msg, name, file: { url: `/${resp.newFilename}`, as: resp.originalFilename } });
+                    $('form')[0].reset();
+                    $('#upload_perc').html('');
+                },
+                xhr: function () {
+                    let xhr = new window.XMLHttpRequest();
+                    xhr.upload.addEventListener('progress', e => {
+                        const percent = (event.loaded / event.total) * 100;
+                        const progress = Math.round(percent);
+                        // $('#upload_perc').html('Uploaded ' + e.loaded + ' bytes of ' + e.total);
+                        $('#upload_perc').html(`${progress}% uploaded`);
+                    }, false);
+                    xhr.addEventListener('error', e => {
+                        $('#upload_perc').html('Upload errored!');
+                        console.error(e);
+                    }, false);
+                    xhr.addEventListener('abort', e => {
+                        $('#upload_perc').html('Upload aborted');
+                        console.error(e);
+                    }, false);
+
+                    return xhr;
+                }
+            });
+        });
+
+        let stopRecording = false;
+        let stopRecordingVideo = false;
+
+        $('#stop-record').css('display', 'none');
+        $('#stop-record-video').css('display', 'none');
+        $('#preview').css('display', 'none');
+
+        $('#stop-record').click(() => {
+            stopRecording = true;
+            $('#stop-record').css('display', 'none');
+            $("#record").prop("disabled", false);
+        });
+
+        $('#record').click(() => {
+            $("#record").prop("disabled", true);
+            $('#stop-record').css('display', 'block');
+            function cb(stream) {
+                const mediaRecorder = new MediaRecorder(stream);
+                mediaRecorder.start();
+                const audioChunks = [];
+
+                mediaRecorder.addEventListener("dataavailable", event => {
+                    audioChunks.push(event.data);
+                });
+
+                mediaRecorder.addEventListener("stop", () => {
+                    const audioBlob = new Blob(audioChunks);
+                    sendAudioBlob(audioBlob);
+                    $("#record").prop("disabled", false);
+                    stopRecording = false;
+                });
+
+                let i = setInterval(() => {
+                    if (stopRecording) {
+                        mediaRecorder.stop();
+                        clearInterval(i);
+                    }
+                }, 10);
+            }
+
+            if (window.navigator.getUserMedia) {
+                window.navigator.getUserMedia({ audio: true }, cb, console.error);
+            } else if (window.navigator.mediaDevices.getUserMedia) {
+                window.navigator.mediaDevices.getUserMedia({ audio: true })
+                    .then(cb)
+                    .catch(console.error);
+            }
+        });
+
+        $('#record-video').click(() => {
+            $('#preview').css('display', 'block');
+            $("#record-video").prop("disabled", true);
+            $('#stop-record-video').css('display', 'block');
+            function cb(stream) {
+                const preview = document.querySelector('#preview');
+                preview.srcObject = stream;
+                preview.onloadedmetadata = function(e) {
+                    preview.play();
+                };
+                const mediaRecorder = new MediaRecorder(stream);
+                mediaRecorder.start();
+                const videoChunks = [];
+
+                mediaRecorder.addEventListener("dataavailable", event => {
+                    videoChunks.push(event.data);
+                });
+
+                mediaRecorder.addEventListener("stop", () => {
+                    stream.getTracks().forEach(s => s.stop());
+                    const videoBlob = new Blob(videoChunks, { type: 'video/webm' });
+                    sendVideoBlob(videoBlob);
+                    $("#record-video").prop("disabled", false);
+                    stopRecordingVideo = false;
+                });
+
+                let i = setInterval(() => {
+                    if (stopRecordingVideo) {
+                        mediaRecorder.stop();
+                        clearInterval(i);
+                    }
+                }, 10);
+            }
+
+            if (window.navigator.getUserMedia) {
+                window.navigator.getUserMedia({ audio: true, video: true }, cb, console.error);
+            } else if (window.navigator.mediaDevices.getUserMedia) {
+                window.navigator.mediaDevices.getUserMedia({ audio: true, video: true })
+                    .then(cb)
+                    .catch(console.error);
+            }
+        });
+
+        $('#stop-record-video').click(() => {
+            stopRecordingVideo = true;
+            $('#stop-record-video').css('display', 'none');
+            $("#record-video").prop("disabled", false);
+            $('#preview').css('display', 'none');
+        });
+        window.onload = getName;
+    </script>
+</body>
+
+</html>
